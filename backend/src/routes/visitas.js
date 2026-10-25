@@ -306,23 +306,31 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ error: 'Error al eliminar visita' });
   }
 });
-// Buscar los datos de un visitante por DNI (toma su última visita)
+// Buscar los datos de un visitante por DNI
+// (toma el dato más reciente que no esté vacío de cada campo)
 router.get('/visitante/:dni', async (req, res) => {
   try {
-    const v = await Visita.findOne({
+    const visitasDni = await Visita.findAll({
       where: { dni: req.params.dni.trim() },
       order: [['id', 'DESC']],
+      limit: 10,
     });
-    if (!v) return res.json(null);
-    const m = mapVisita(v);
+    if (visitasDni.length === 0) return res.json(null);
+
+    const lista = visitasDni.map(mapVisita);
+    const masReciente = campo => {
+      const v = lista.find(x => x[campo] && String(x[campo]).trim() !== '');
+      return v ? v[campo] : '';
+    };
+
     res.json({
-      nombreVisitante: m.nombreVisitante,
-      apellidoVisitante: m.apellidoVisitante,
-      dni: m.dni,
-      telefono: m.telefono,
-      domicilio: m.domicilio,
-      parentesco: m.parentesco,
-      foto: m.foto,
+      nombreVisitante: masReciente('nombreVisitante'),
+      apellidoVisitante: masReciente('apellidoVisitante'),
+      dni: lista[0].dni,
+      telefono: masReciente('telefono'),
+      domicilio: masReciente('domicilio'),
+      parentesco: masReciente('parentesco'),
+      foto: masReciente('foto'),
     });
   } catch (err) {
     res.status(500).json({ error: 'Error al buscar visitante' });
