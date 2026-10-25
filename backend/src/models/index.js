@@ -37,7 +37,7 @@ const Visita = sequelize.define(
     nombre_visitante: { type: DataTypes.STRING(100), allowNull: false },
     apellido_visitante: { type: DataTypes.STRING(100), allowNull: false },
     dni: { type: DataTypes.STRING(20), allowNull: false },
-    telefono: { type: DataTypes.STRING(30), unique: true },
+    telefono: DataTypes.STRING(30),
     domicilio: { type: DataTypes.STRING(200), allowNull: false },
     parentesco: DataTypes.STRING(50),
     fecha: DataTypes.DATEONLY,
