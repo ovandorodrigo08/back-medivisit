@@ -45,7 +45,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   POST   /api/visitas`);
   console.log(`   PUT    /api/visitas/:id`);
   console.log(`   DELETE /api/visitas/:id`);
-});
+
   setupDatabase()
     .then(() => {
       console.log('✅ Base de datos conectada correctamente');
@@ -53,3 +53,4 @@ app.listen(PORT, '0.0.0.0', () => {
     .catch((error) => {
       console.error('❌ Error al conectar la base de datos:', error);
     });
+});
