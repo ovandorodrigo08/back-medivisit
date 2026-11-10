@@ -218,7 +218,6 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    try {
 
     // ==========================================
     // VALIDAR DNI DUPLICADO
