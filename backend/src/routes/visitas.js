@@ -218,6 +218,52 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    try {
+
+    // ==========================================
+    // VALIDAR DNI DUPLICADO
+    // ==========================================
+
+    const normalizarDNI = valor =>
+        String(valor || '').replace(/\D/g, '');
+
+    const normalizarTexto = valor =>
+        String(valor || '').trim().toLowerCase();
+
+    const dniNormalizado = normalizarDNI(dni);
+
+    if (!dniNormalizado) {
+        return res.status(400).json({
+            error: 'El DNI ingresado no es válido.'
+        });
+    }
+
+    // Buscar registros existentes
+    const registros = await Visita.findAll({
+        attributes: [
+            'dni',
+            'nombre_visitante',
+            'apellido_visitante'
+        ]
+    });
+
+    // Comprobar si el DNI pertenece a otra persona
+    const dniDuplicado = registros.find(registro =>
+        normalizarDNI(registro.dni) === dniNormalizado &&
+        (
+            normalizarTexto(registro.nombre_visitante) !== normalizarTexto(nombreVisitante) ||
+            normalizarTexto(registro.apellido_visitante) !== normalizarTexto(apellidoVisitante)
+        )
+    );
+
+    if (dniDuplicado) {
+        return res.status(409).json({
+            error: 'Este DNI ya está registrado con los datos de otra persona.'
+        });
+    }
+
+    // Guardar el DNI normalizado
+    req.body.dni = dniNormalizado;
     // Un paciente no puede tener dos visitas el mismo día
     if (fecha) {
       const visitaExistente = await Visita.findOne({
@@ -281,6 +327,47 @@ router.put('/:id', async (req, res) => {
   try {
     const visita = await Visita.findByPk(req.params.id);
     if (!visita) return res.status(404).json({ error: 'Visita no encontrada' });
+    // VALIDAR DNI DUPLICADO AL EDITAR
+
+const normalizarDNI = valor =>
+    String(valor || '').replace(/\D/g, '');
+
+const normalizarTexto = valor =>
+    String(valor || '').trim().toLowerCase();
+
+const dniNormalizado = normalizarDNI(dni);
+
+if (!dniNormalizado) {
+    return res.status(400).json({
+        error: 'El DNI ingresado no es válido.'
+    });
+}
+
+const registros = await Visita.findAll({
+    attributes: [
+        'id',
+        'dni',
+        'nombre_visitante',
+        'apellido_visitante'
+    ]
+});
+
+const dniDuplicado = registros.find(registro =>
+    String(registro.id) !== String(req.params.id) &&
+    normalizarDNI(registro.dni) === dniNormalizado &&
+    (
+        normalizarTexto(registro.nombre_visitante) !== normalizarTexto(nombreVisitante) ||
+        normalizarTexto(registro.apellido_visitante) !== normalizarTexto(apellidoVisitante)
+    )
+);
+
+if (dniDuplicado) {
+    return res.status(409).json({
+        error: 'Este DNI ya está registrado con los datos de otra persona.'
+    });
+}
+
+req.body.dni = dniNormalizado;
 
     const datos = datosVisita(req.body);
     // El formulario de edición no manda la foto: solo se cambia si viene una nueva.
