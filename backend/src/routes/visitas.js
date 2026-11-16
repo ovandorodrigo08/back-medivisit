@@ -4,7 +4,7 @@ const router = express.Router();
 const { Op } = require('sequelize');
 const PDFDocument = require('pdfkit');
 const path = require('path');
-const { Visita } = require('../models');
+const { Visita, Paciente } = require('../models');
 const cloudinary = require('../config/cloudinary');
 
 // Helper: mapea fila DB → objeto frontend
@@ -79,6 +79,57 @@ async function visitasDeLaSemana(lunes, domingo) {
     order: [['fecha', 'ASC'], ['hora_ingreso', 'ASC']],
   });
   return filas.map(mapVisita);
+}
+
+// ── Control de visitantes simultáneos ─────────
+const MAX_VISITANTES_SIMULTANEOS = 2;
+const FIN_DEL_DIA = 23 * 60 + 59; // minutos desde las 00:00
+
+// 'HH:MM' o 'HH:MM:SS' → minutos desde las 00:00 (null si no hay valor)
+const aMinutos = (hora) => {
+  if (!hora) return null;
+  const [h, m] = String(hora).split(':').map(Number);
+  return h * 60 + (m || 0);
+};
+
+// Fecha y hora actuales en Argentina (Render corre en UTC, 3 horas adelantado)
+function ahoraArgentina() {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const g = (tipo) => partes.find((p) => p.type === tipo).value;
+  return { fecha: `${g('year')}-${g('month')}-${g('day')}`, hora: `${g('hour')}:${g('minute')}` };
+}
+
+// Cuenta las visitas del paciente cuyo horario se superpone con el de la nueva.
+// Una visita "libera su lugar" cuando llega a su hora_salida.
+async function contarVisitasSimultaneas({ pacienteId, pacienteNombre, fecha, horaIngreso, horaSalida }) {
+  const ahora = ahoraArgentina();
+  const fechaNueva = fecha || ahora.fecha;
+
+  // Horario de la visita nueva (si no viene hora de ingreso, se usa la actual)
+  let ini = aMinutos(horaIngreso);
+  if (ini === null) ini = fechaNueva === ahora.fecha ? aMinutos(ahora.hora) : 0;
+  let fin = aMinutos(horaSalida);
+  if (fin === null || fin <= ini) fin = FIN_DEL_DIA;
+
+  // Visitas del mismo paciente ese mismo día (por id, o por nombre en las viejas)
+  const condicionesPaciente = [{ paciente_nombre: pacienteNombre }];
+  if (pacienteId) condicionesPaciente.push({ paciente_id: pacienteId });
+
+  const existentes = await Visita.findAll({
+    where: { fecha: fechaNueva, [Op.or]: condicionesPaciente },
+    attributes: ['hora_ingreso', 'hora_salida'],
+  });
+
+  return existentes.filter((v) => {
+    const exIni = aMinutos(v.hora_ingreso) ?? 0;
+    let exFin = aMinutos(v.hora_salida);
+    if (exFin === null || exFin <= exIni) exFin = FIN_DEL_DIA;
+    return exIni < fin && exFin > ini; // se superponen en el tiempo
+  }).length;
 }
 
 // GET /api/visitas — listar todas
@@ -211,7 +262,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/visitas — crear
 router.post('/', async (req, res) => {
   const { paciente, nombreVisitante, apellidoVisitante, dni,
-    domicilio, fecha, tipo, foto } = req.body;
+    domicilio, fecha, horaIngreso, horaSalida, foto } = req.body;
 
   if (!paciente || !nombreVisitante || !apellidoVisitante || !dni || !domicilio) {
     return res.status(400).json({ error: 'paciente, nombre, apellido, dni y domicilio son obligatorios' });
@@ -263,33 +314,25 @@ router.post('/', async (req, res) => {
 
     // Guardar el DNI normalizado
     req.body.dni = dniNormalizado;
-    // Un paciente no puede tener dos visitas el mismo día
-    if (fecha) {
-      const visitaExistente = await Visita.findOne({
-        where: { paciente_nombre: paciente, fecha },
-        attributes: ['id'],
+    // Buscar el paciente (para la clave foránea paciente_id y para el control)
+    const pacienteDB = await Paciente.findOne({ where: { nombre: paciente } });
+
+    // Máximo 2 visitantes AL MISMO TIEMPO por paciente.
+    // Cuando a una visita se le acaba el tiempo (hora_salida), libera el lugar
+    // y puede entrar otro visitante.
+    const simultaneas = await contarVisitasSimultaneas({
+      pacienteId: pacienteDB ? pacienteDB.id : null,
+      pacienteNombre: paciente,
+      fecha,
+      horaIngreso,
+      horaSalida,
+    });
+
+    if (simultaneas >= MAX_VISITANTES_SIMULTANEOS) {
+      return res.status(409).json({
+        error: `Este paciente ya tiene ${MAX_VISITANTES_SIMULTANEOS} visitantes en ese horario. ` +
+               'Esperá a que termine el tiempo de una de las visitas.'
       });
-
-      if (visitaExistente) {
-        return res.status(400).json({
-          error: `Este paciente ya tiene una visita registrada para esa fecha.`
-        });
-      }
-    }
-
-    // Máximo 2 visitantes por tipo (Permanente / Temporal) por paciente
-    if (tipo === 'Permanente' || tipo === 'Temporal') {
-      const total = await Visita.count({
-        where: { paciente_nombre: paciente, tipo },
-      });
-
-      if (total >= 2) {
-        return res.status(400).json({
-          error: tipo === 'Permanente'
-            ? 'Máximo permitido: 2 visitantes por paciente.'
-            : 'Máximo permitido: 2 visitantes temporales por paciente.'
-        });
-      }
     }
 
     // ── Subir la foto a Cloudinary (si vino una) ──
@@ -305,7 +348,11 @@ router.post('/', async (req, res) => {
       }
     }
 
-    const creada = await Visita.create({ ...datosVisita(req.body), foto: fotoUrl });
+    const creada = await Visita.create({
+      ...datosVisita(req.body),
+      foto: fotoUrl,
+      paciente_id: pacienteDB ? pacienteDB.id : null,
+    });
     // Se vuelve a leer para devolver exactamente lo que quedó guardado en la base
     const visita = await Visita.findByPk(creada.id);
     res.status(201).json(mapVisita(visita));
@@ -372,6 +419,10 @@ req.body.dni = dniNormalizado;
     // El formulario de edición no manda la foto: solo se cambia si viene una nueva.
     // (Antes, editar una visita borraba su foto.)
     if (foto) datos.foto = foto;
+
+    // Mantener la clave foránea al día si se cambió el paciente de la visita
+    const pacienteDB = await Paciente.findOne({ where: { nombre: paciente } });
+    datos.paciente_id = pacienteDB ? pacienteDB.id : null;
 
     await visita.update(datos);
     res.json({ mensaje: 'Visita actualizada', id: req.params.id });

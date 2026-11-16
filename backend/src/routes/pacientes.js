@@ -1,7 +1,7 @@
 // src/routes/pacientes.js
 const express = require('express');
 const router = express.Router();
-const { Paciente } = require('../models');
+const { Paciente, Visita } = require('../models');
 
 // Mapear columnas snake_case → camelCase para el frontend
 function mapPaciente(p) {
@@ -105,6 +105,14 @@ router.put('/:id', async (req, res) => {
     if (!paciente) return res.status(404).json({ error: 'Paciente no encontrado' });
 
     await paciente.update(datosPaciente(req.body));
+
+    // Si cambió el nombre, las visitas del paciente (por paciente_id) lo acompañan
+    // y no quedan huérfanas.
+    await Visita.update(
+      { paciente_nombre: paciente.nombre },
+      { where: { paciente_id: paciente.id } }
+    );
+
     res.json({ mensaje: 'Paciente actualizado', id: req.params.id });
   } catch (err) {
     console.error('PUT /pacientes error:', err.message);

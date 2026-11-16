@@ -34,6 +34,8 @@ const Visita = sequelize.define(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     paciente_nombre: { type: DataTypes.STRING(150), allowNull: false },
+    // Clave foránea hacia pacientes.id (el "nexo" de la relación 1:N)
+    paciente_id: { type: DataTypes.INTEGER, allowNull: true },
     nombre_visitante: { type: DataTypes.STRING(100), allowNull: false },
     apellido_visitante: { type: DataTypes.STRING(100), allowNull: false },
     dni: { type: DataTypes.STRING(20), allowNull: false },
@@ -63,5 +65,10 @@ const Usuario = sequelize.define(
   },
   { tableName: 'usuarios', timestamps: false }
 );
+
+// ── relaciones ────────────────────────────────
+// Un paciente tiene MUCHAS visitas (1:N). El nexo es visitas.paciente_id.
+Paciente.hasMany(Visita, { foreignKey: 'paciente_id', as: 'visitas' });
+Visita.belongsTo(Paciente, { foreignKey: 'paciente_id', as: 'paciente' });
 
 module.exports = { sequelize, Paciente, Visita, Usuario };
